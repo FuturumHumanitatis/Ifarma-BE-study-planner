@@ -5,6 +5,7 @@ from pk_data.source import get_pk_parameters
 from design.logic import select_study_design
 from calculations.sample_size import calculate_sample_size
 from reg.checks import run_regulatory_checks
+from synopsis.generator import generate_synopsis_llm
 
 # --- Настройка страницы ---
 st.set_page_config(page_title="AI Protocol Engine", layout="wide", initial_sidebar_state="collapsed")
@@ -215,3 +216,91 @@ if st.session_state.step == 2:
     with col_btn2:
         if st.button("Генерировать Синопсис (AI LLM Engine)"):
             st.success("Данные подготовлены! На следующем шаге мы подключим API и вставим эти расчеты в твой шаблон.")
+
+
+
+
+# В самом верху app.py добавь импорт (если его там нет):
+    # 
+
+    # --- БЛОК ГЕНЕРАЦИИ СИНОПСИСА ---
+    st.markdown("<div class='module-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'><span class='status-indicator status-info'></span>Генерация синопсиса (AI Medical Writer)</div>", unsafe_allow_html=True)
+    
+    # Поле для API ключа (безопасный ввод)
+    openai_key = st.text_input("Введите OpenAI API Key (начинается с sk-...)", type="password", help="Ключ никуда не сохраняется и нужен только для генерации в текущей сессии")
+    
+    if st.button("Сгенерировать черновик протокола (GPT-4o)"):
+        if not openai_key:
+            st.error("Пожалуйста, введите API ключ OpenAI.")
+        else:
+            with st.spinner("LLM анализирует фармакокинетику, применяет регуляторные правила и заполняет шаблон... Это займет 10-20 секунд."):
+                try:
+                    # В реальном проекте мы бы вынесли текст промпта в отдельный файл (например template.txt), 
+                    # но для скорости хакатона загрузим его здесь как строку:
+                    # (Сюда нужно вставить твой длинный промпт из предыдущего сообщения)
+                    template_prompt = """(Вставь сюда текст твоего промпта и таблицы)""" 
+                    
+                    # Закомментированная строка для прода:
+                    # with open("prompt_template.txt", "r", encoding="utf-8") as f:
+                    #    template_prompt = f.read()
+
+                    # Временная заглушка для теста (если не хочешь тратить токены прямо сейчас):
+                    # result_text = "Здесь будет сгенерированный Markdown текст от LLM..."
+                    
+                    # РЕАЛЬНЫЙ ВЫЗОВ:
+                    from synopsis.generator import generate_synopsis_llm
+                    result_text = generate_synopsis_llm(openai_key, si, pk_data, design, sample_size, template_prompt)
+                    
+                    st.session_state.generated_synopsis = result_text
+                    st.success("Синопсис успешно сгенерирован!")
+                except Exception as e:
+                    st.error(f"Ошибка при обращении к API: {e}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# --- ШАГ 3: РЕДАКТИРОВАНИЕ И ЭКСПОРТ ---
+if 'generated_synopsis' in st.session_state:
+    st.markdown("<div class='module-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>Редактор и экспорт документа</div>", unsafe_allow_html=True)
+    
+    # Вкладки для удобства
+    tab1, tab2 = st.tabs(["Предпросмотр (Markdown)", "Экспорт"])
+    
+    with tab1:
+        st.markdown("<div class='alert-box alert-warning'><b>Human-in-the-loop:</b> Проверьте сгенерированный текст. При необходимости его можно будет отредактировать в Word.</div>", unsafe_allow_html=True)
+        st.markdown(st.session_state.generated_synopsis)
+        
+    with tab2:
+        st.write("Выберите формат для загрузки:")
+        
+        # Скачивание в Markdown
+        st.download_button(
+            label="Скачать как .MD (Markdown)",
+            data=st.session_state.generated_synopsis,
+            file_name=f"Synopsis_{st.session_state.study_input.inn}.md",
+            mime="text/markdown"
+        )
+        
+        # Создание простого Word файла
+        try:
+            from docx import Document
+            doc = Document()
+            doc.add_heading(f'Синопсис протокола: {st.session_state.study_input.inn}', 0)
+            for paragraph in st.session_state.generated_synopsis.split('\n'):
+                if paragraph.strip():
+                    doc.add_paragraph(paragraph)
+            
+            import io
+            bio = io.BytesIO()
+            doc.save(bio)
+            
+            st.download_button(
+                label="Скачать как .DOCX (Word)",
+                data=bio.getvalue(),
+                file_name=f"Synopsis_{st.session_state.study_input.inn}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        except Exception as e:
+            st.error(f"Установите python-docx для экспорта в Word: {e}")
+            
+    st.markdown("</div>", unsafe_allow_html=True)
