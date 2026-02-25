@@ -1,159 +1,217 @@
 import streamlit as st
 import time
-from core_logic import calculate_sample_size, determine_study_design
+from models.domain import StudyInput
+from pk_data.source import get_pk_parameters
+from design.logic import select_study_design
+from stats.sample_size import calculate_sample_size
+from reg.checks import run_regulatory_checks
 
-# Настройка страницы (должна быть первой командой)
-st.set_page_config(
-    page_title="AI Protocol Planner | Bioequivalence",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- Настройка страницы ---
+st.set_page_config(page_title="AI Protocol Engine", layout="wide", initial_sidebar_state="collapsed")
 
-# Строгий корпоративный CSS (убираем лишнее, задаем цвета)
+# --- Современный CSS (Анимации, тени, строгие цвета) ---
 st.markdown("""
-    <style>
-    /* Убираем стандартную верхнюю панель Streamlit для чистоты */
-    header {visibility: hidden;}
-    /* Строгие шрифты */
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
     html, body, [class*="css"] {
-        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-family: 'Inter', sans-serif;
+        background-color: #F8FAFC;
     }
-    /* Стилизация кнопок */
-    .stButton>button {
-        background-color: #0A2540;
-        color: white;
-        border-radius: 4px;
-        border: none;
-        padding: 0.5rem 1rem;
+    
+    /* Анимации появления */
+    @keyframes slideUpFade {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulseGreen {
+        0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+        70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    /* Карточки модулей */
+    .module-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        animation: slideUpFade 0.6s ease-out forwards;
+    }
+    
+    /* Заголовки разделов */
+    .section-title {
+        color: #0F172A;
+        font-size: 1.25rem;
         font-weight: 600;
-        transition: all 0.3s ease;
+        margin-bottom: 16px;
+        border-bottom: 2px solid #F1F5F9;
+        padding-bottom: 8px;
     }
-    .stButton>button:hover {
-        background-color: #113A64;
+
+    /* Индикаторы статусов (вместо смайлов) */
+    .status-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 8px;
+    }
+    .status-success { background-color: #10B981; animation: pulseGreen 2s infinite; }
+    .status-warning { background-color: #F59E0B; }
+    .status-error { background-color: #EF4444; }
+    .status-info { background-color: #3B82F6; }
+
+    /* Блоки алертов */
+    .alert-box {
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        font-size: 0.95rem;
+        border-left: 4px solid;
+    }
+    .alert-info { background: #EFF6FF; border-color: #3B82F6; color: #1E3A8A; }
+    .alert-warning { background: #FFFBEB; border-color: #F59E0B; color: #92400E; }
+    .alert-error { background: #FEF2F2; border-color: #EF4444; color: #991B1B; }
+
+    /* Кнопки */
+    .stButton > button {
+        background-color: #0F172A;
         color: white;
+        border-radius: 8px;
+        padding: 0.6rem 1.5rem;
+        font-weight: 500;
+        border: none;
+        transition: all 0.2s;
+        width: 100%;
     }
-    /* Кастомные плашки (вместо смайлов) */
-    .info-box {
-        background-color: #E8F0FE;
-        border-left: 4px solid #1A73E8;
-        padding: 15px;
-        margin-bottom: 20px;
-        border-radius: 0 4px 4px 0;
-        color: #202124;
+    .stButton > button:hover {
+        background-color: #334155;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
     }
-    .success-box {
-        background-color: #E6F4EA;
-        border-left: 4px solid #1E8E3E;
-        padding: 15px;
-        margin-bottom: 20px;
-        border-radius: 0 4px 4px 0;
-        color: #202124;
+    
+    /* Данные Data Point */
+    .data-point {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 16px;
     }
-    .warning-box {
-        background-color: #FEF7E0;
-        border-left: 4px solid #F9AB00;
-        padding: 15px;
-        margin-bottom: 20px;
-        border-radius: 0 4px 4px 0;
-        color: #202124;
-    }
-    h1, h2, h3 { color: #202124; }
-    </style>
+    .data-label { font-size: 0.85rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+    .data-value { font-size: 1.15rem; color: #0F172A; font-weight: 500; }
+</style>
 """, unsafe_allow_html=True)
 
-# Заголовок
-st.markdown("<h1>Система проектирования исследований биоэквивалентности</h1>", unsafe_allow_html=True)
-st.markdown("<div class='info-box'>Введите параметры исследуемого препарата для автоматического расчета дизайна, выборки и генерации синопсиса протокола (согласно Решению ЕЭК №85).</div>", unsafe_allow_html=True)
+# --- HEADER ---
+st.markdown("""
+<div style='padding: 2rem 0; text-align: center; animation: slideUpFade 0.5s ease-out;'>
+    <h1 style='color: #0F172A; margin: 0;'>Clinical Trial Architecture Engine</h1>
+    <p style='color: #64748B; font-size: 1.1rem;'>Модуль проектирования исследований биоэквивалентности</p>
+</div>
+""", unsafe_allow_html=True)
 
-# Создаем колонки для ввода данных
-col1, col2 = st.columns(2)
+# Инициализация состояния
+if 'step' not in st.session_state:
+    st.session_state.step = 1
 
-with col1:
-    st.markdown("### Входные параметры препарата")
-    test_drug_name = st.text_input("Название препарата (Дженерик)", "Препарат Тест")
-    ref_drug_name = st.text_input("Препарат сравнения (Оригинал)", "Препарат Референс")
-    is_toxic = st.checkbox("Препарат имеет высокую токсичность (напр., цитостатик)")
-    food_effect = st.selectbox("Режим приема", ["натощак", "после еды"])
+# --- ШАГ 1: ВВОД ДАННЫХ ---
+if st.session_state.step == 1:
+    st.markdown("<div class='module-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>Конфигурация препарата</div>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        inn = st.text_input("МНН (Международное непатентованное наименование)", placeholder="Например: Omeprazole")
+        form = st.selectbox("Лекарственная форма", ["tablet", "capsule", "solution", "other"])
+    with col2:
+        dose = st.number_input("Дозировка (мг)", min_value=0.1, value=20.0, step=5.0)
+        regime = st.selectbox("Режим приема", ["fasted", "fed", "both"])
+    with col3:
+        cv_known = st.number_input("Известный CVintra (доля 0-1)", min_value=0.0, max_value=1.0, value=0.0, step=0.05, help="Оставьте 0, если неизвестно")
+        is_toxic = st.checkbox("Высокотоксичный препарат (цитостатики и т.д.)")
 
-with col2:
-    st.markdown("### Фармакокинетические данные (PK)")
-    cv_intra = st.number_input("Внутрисубъектная вариабельность (CVintra, %)", min_value=1.0, max_value=100.0, value=25.0, step=0.1)
-    t_half = st.number_input("Период полувыведения (T1/2, часы)", min_value=0.1, value=12.0, step=0.5)
-    dropout_rate = st.slider("Прогнозируемый % выбывания (Drop-out)", 5, 40, 20)
+    if st.button("Инициализировать алгоритм"):
+        if inn:
+            cv_val = cv_known if cv_known > 0 else None
+            st.session_state.study_input = StudyInput(
+                inn=inn, dose_mg=dose, form=form, regime=regime,
+                cv_intra=cv_val, is_toxic=is_toxic
+            )
+            st.session_state.step = 2
+            st.rerun()
+        else:
+            st.markdown("<div class='alert-box alert-error'>Необходимо указать МНН препарата.</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown("---")
+# --- ШАГ 2: ВЫЧИСЛЕНИЯ И ОТЧЕТ ---
+if st.session_state.step == 2:
+    si = st.session_state.study_input
+    
+    # Имитация работы API с логами (создает "технический" вайб)
+    log_container = st.empty()
+    logs = [
+        "Подключение к базе данных PK параметров...",
+        f"Поиск МНН: {si.inn}...",
+        "Извлечение фармакокинетических профилей...",
+        "Анализ дисперсии и расчет мощности...",
+        "Генерация регуляторного отчета..."
+    ]
+    for i in range(len(logs)):
+        log_container.markdown(f"<div style='font-family: monospace; color: #10B981; font-size: 0.9rem;'>> {logs[i]}</div>", unsafe_allow_html=True)
+        time.sleep(0.4)
+    log_container.empty()
 
-# Кнопка запуска вычислений
-if st.button("Рассчитать параметры и спланировать дизайн"):
+    # Исполнение бизнес-логики
+    pk_data = get_pk_parameters(si)
+    design = select_study_design(si, pk_data)
     
-    # Имитация загрузки для "серьезности" работы системы
-    with st.spinner("Анализ данных и расчет статистической мощности..."):
-        time.sleep(1) # небольшая пауза
-        
-    # 1. Выбираем дизайн
-    design_type, design_reason = determine_study_design(cv_intra, t_half, is_toxic)
-    
-    # 2. Считаем выборку
-    sample_data = calculate_sample_size(cv_intra, drop_out_rate=dropout_rate/100.0)
-    
-    # Вывод результатов в красивых плашках
-    st.markdown("### Результаты проектирования")
-    
-    r_col1, r_col2 = st.columns(2)
-    
-    with r_col1:
-        st.markdown(f"""
-        <div class='success-box'>
-            <b>Рекомендованный дизайн:</b> {design_type}<br>
-            <b>Обоснование:</b> {design_reason}
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with r_col2:
-        st.markdown(f"""
-        <div class='success-box'>
-            <b>Размер выборки (N):</b> {sample_data['n_total']} добровольцев<br>
-            <b>Базовая потребность (без drop-out):</b> {sample_data['n_base']} добровольцев
-        </div>
-        """, unsafe_allow_html=True)
+    effective_cv = si.cv_intra if si.cv_intra else (pk_data.cv_intra if pk_data.cv_intra else 0.25)
+    sample_size = calculate_sample_size(si, design, effective_cv)
+    issues = run_regulatory_checks(si, pk_data, design, sample_size)
 
-    # Вывод математики (чтобы жюри видело прозрачность)
-    st.markdown("#### Статистическое обоснование выборки")
-    st.latex(rf"""
-        N = \frac{{2({sample_data['z_alpha']} + {sample_data['z_beta']})^2 \times {sample_data['sigma_sq']}}}{{(\ln 0.8)^2}} \approx {sample_data['n_base']}
-    """)
+    # ВЫВОД РЕЗУЛЬТАТОВ: КАРТОЧКА 1 (Дизайн)
+    st.markdown("<div class='module-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'><span class='status-indicator status-success'></span>Архитектура исследования</div>", unsafe_allow_html=True)
     
-    # --- ТА САМАЯ ФИЧА ДЛЯ ФАРМАЦЕВТА ---
-    st.markdown("---")
-    st.markdown("### Модуль ослепления (Blinding Label Generator)")
-    st.markdown("""
-    <div class='warning-box'>
-        <b>GCP Compliance:</b> Для предотвращения субъективности (Bias), препараты будут переупакованы (Over-encapsulation). 
-        Клинический персонал получит зашифрованные наборы. Ниже сгенерирована матрица для фармацевта исследовательского центра.
-    </div>
-    """, unsafe_allow_html=True)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.markdown(f"<div class='data-point'><span class='data-label'>Выбранный дизайн</span><span class='data-value'>{design.type.upper()}</span></div>", unsafe_allow_html=True)
+    col2.markdown(f"<div class='data-point'><span class='data-label'>Периоды / Смывка</span><span class='data-value'>{design.periods} / {design.washout_days} дн.</span></div>", unsafe_allow_html=True)
+    col3.markdown(f"<div class='data-point'><span class='data-label'>Выборка (N Total)</span><span class='data-value'>{sample_size.adjusted_for_dropout}</span></div>", unsafe_allow_html=True)
+    col4.markdown(f"<div class='data-point'><span class='data-label'>RSABE статус</span><span class='data-value'>{'Применимо' if design.rsabe_applicable else 'Не требуется'}</span></div>", unsafe_allow_html=True)
     
-    # Генерация фейковой матрицы для демонстрации
+    st.markdown(f"<div style='color: #475569; font-size: 0.95rem; margin-top: 10px;'><b>Полное название:</b> {design.name}<br><b>Схемы рандомизации:</b> {', '.join(design.sequences)}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ВЫВОД РЕЗУЛЬТАТОВ: КАРТОЧКА 2 (Регуляторика)
+    st.markdown("<div class='module-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>Регуляторный комплаенс (ЕАЭС №85)</div>", unsafe_allow_html=True)
+    
+    if not issues:
+        st.markdown("<div class='alert-box alert-info'>Нарушений протокола не выявлено. Дизайн полностью соответствует регуляторным нормам.</div>", unsafe_allow_html=True)
+    else:
+        for issue in issues:
+            css_class = f"alert-{issue.severity}" if issue.severity in ['info', 'warning', 'error'] else "alert-info"
+            st.markdown(f"<div class='alert-box {css_class}'><b>[{issue.code}]</b> {issue.message}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # --- ФИЧА: Модуль ослепления (Blinding) ---
+    st.markdown("<div class='module-card' style='border-color: #CBD5E1;'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'><span class='status-indicator status-info'></span>Модуль IWRS / Ослепление (Для Фармацевта)</div>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size: 0.9rem; color: #64748B;'>Генерация матрицы переупаковки препаратов для обеспечения двойного слепого контроля.</p>", unsafe_allow_html=True)
+    
     import pandas as pd
-    matrix_df = pd.DataFrame({
-        "Код на упаковке (Label)": ["TRT-A-001", "TRT-B-002", "TRT-A-003", "TRT-B-004"],
-        "Содержимое (Скрыто от врача)": [test_drug_name, ref_drug_name, test_drug_name, ref_drug_name],
-        "Инструкция фармацевту": ["Выдать в Период 1", "Выдать в Период 1", "Выдать в Период 2", "Выдать в Период 2"]
+    blind_df = pd.DataFrame({
+        "Label Code (Видит врач)": ["SEQ-A-101", "SEQ-B-102", "SEQ-A-103"],
+        "Содержимое (Скрыто)": [f"TEST ({si.inn})", "REFERENCE", f"TEST ({si.inn})"],
+        "Выдача (Период 1)": ["Флакон А", "Флакон B", "Флакон А"]
     })
-    st.dataframe(matrix_df, hide_index=True, use_container_width=True)
-    
-    # Подготовка к шагу LLM (сохраняем данные в session_state)
-    st.session_state['ready_for_llm'] = True
-    st.session_state['json_data'] = {
-        "test_drug": {"name": test_drug_name, "substance": "МНН"},
-        "reference_drug": {"name": ref_drug_name},
-        "design": {"type": design_type, "food": food_effect},
-        "pk_data": {"cv_intra_percent": cv_intra, "t_half_hours": t_half},
-        "sample_size": {"n_enrolled": sample_data['n_total'], "dropout_percent": f"{dropout_rate}%"}
-    }
+    st.dataframe(blind_df, use_container_width=True, hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# Если расчеты выполнены, показываем кнопку генерации документа
-if st.session_state.get('ready_for_llm', False):
-    st.markdown("---")
-    if st.button("Сгенерировать синопсис (AI Engine)"):
-        st.info("Здесь будет интеграция с LLM и подстановка в твой шаблон. Мы сделаем это на следующем шаге!")
+    # Кнопка перехода к LLM (заглушка для следующего шага)
+    col_btn1, col_btn2, col_btn3 = st.columns([1,2,1])
+    with col_btn2:
+        if st.button("Генерировать Синопсис (AI LLM Engine)"):
+            st.success("Данные подготовлены! На следующем шаге мы подключим API и вставим эти расчеты в твой шаблон.")
