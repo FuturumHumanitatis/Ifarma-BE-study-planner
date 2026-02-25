@@ -3,7 +3,7 @@ import time
 from models.domain import StudyInput
 from pk_data.source import get_pk_parameters
 from design.logic import select_study_design
-from calculations.sample_size import calculate_sample_size
+from stats.sample_size import calculate_sample_size
 from reg.checks import run_regulatory_checks
 
 # --- Настройка страницы ---
